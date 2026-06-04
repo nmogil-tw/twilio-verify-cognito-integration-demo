@@ -1,25 +1,28 @@
-import { createHash } from "crypto";
 import { getSecret } from "./secrets";
 
-/** Twilio identity は英数字とハイフンのみ許可。メールをSHA256ハッシュに変換する */
-export function toTwilioIdentity(email: string): string {
-  return createHash("sha256").update(email.toLowerCase()).digest("hex");
-}
+/**
+ * Twilio Verify channels used by this demo.
+ * SMS is the default; RCS gives an IP-based, branded delivery with read
+ * receipts and falls back automatically when the device/carrier can't receive
+ * it (Verify handles capability detection service-side).
+ */
+export type VerifyChannel = "sms" | "rcs";
 
 const BASE = "https://verify.twilio.com";
 
-async function twilioFetch(path: string, body: Record<string, unknown>) {
+async function twilioFetch(path: string, params: Record<string, string>) {
   const accountSid = process.env.TWILIO_ACCOUNT_SID!;
   const authToken = await getSecret("TWILIO_AUTH_TOKEN");
 
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      // Verify's REST API expects form-encoded bodies
+      "Content-Type": "application/x-www-form-urlencoded",
       Authorization:
         "Basic " + Buffer.from(`${accountSid}:${authToken}`).toString("base64"),
     },
-    body: JSON.stringify(body),
+    body: new URLSearchParams(params).toString(),
   });
 
   if (!res.ok) {
@@ -38,48 +41,33 @@ function servicePath() {
   return `/v2/Services/${process.env.TWILIO_VERIFY_SERVICE_SID!}`;
 }
 
-// --- Registration ---
-
-export async function createPasskeyFactor(
-  identity: string,
-  friendlyName: string,
-) {
-  // POST /v2/Services/{ServiceSid}/Passkeys/Factors
-  const data = await twilioFetch(`${servicePath()}/Passkeys/Factors`, {
-    identity,
-    friendly_name: friendlyName,
+/**
+ * Start a verification — sends an OTP to the phone number on the chosen
+ * channel. Twilio generates the code, owns the TTL and attempt counting.
+ *
+ * POST /v2/Services/{ServiceSid}/Verifications
+ * Returns an object whose `status` is "pending" on success.
+ */
+export async function startVerification(to: string, channel: VerifyChannel) {
+  const data = await twilioFetch(`${servicePath()}/Verifications`, {
+    To: to,
+    Channel: channel,
   });
-  // data.sid = Factor SID (YF...)
-  // data.options = WebAuthn PublicKeyCredentialCreationOptions
+  // data.sid = Verification SID (VE...), data.status = "pending"
   return data;
 }
 
-export async function verifyPasskeyFactor(credential: object) {
-  // POST /v2/Services/{ServiceSid}/Passkeys/VerifyFactor
-  const data = await twilioFetch(
-    `${servicePath()}/Passkeys/VerifyFactor`,
-    credential as Record<string, unknown>,
-  );
-  return data;
-}
-
-export async function approvePasskeyChallenge(credential: object) {
-  // POST /v2/Services/{ServiceSid}/Passkeys/ApproveChallenge
-  const data = await twilioFetch(
-    `${servicePath()}/Passkeys/ApproveChallenge`,
-    credential,
-  );
-  return data;
-}
-
-// --- Authentication ---
-
-export async function createPasskeyChallenge(identity: string) {
-  // POST /v2/Services/{ServiceSid}/Passkeys/Challenges
-  const data = await twilioFetch(`${servicePath()}/Passkeys/Challenges`, {
-    identity,
+/**
+ * Check the OTP the user typed in.
+ *
+ * POST /v2/Services/{ServiceSid}/VerificationCheck
+ * Returns an object whose `status` is "approved" when the code is correct.
+ */
+export async function checkVerification(to: string, code: string) {
+  const data = await twilioFetch(`${servicePath()}/VerificationCheck`, {
+    To: to,
+    Code: code,
   });
-  // data.sid = Challenge SID (YC...)
-  // data.options = WebAuthn PublicKeyCredentialRequestOptions
+  // data.status = "approved" | "pending" | "canceled"
   return data;
 }

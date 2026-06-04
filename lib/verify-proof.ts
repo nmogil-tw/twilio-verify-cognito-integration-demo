@@ -1,5 +1,13 @@
 import { createHmac, timingSafeEqual } from "crypto";
 
+/**
+ * Short-lived HMAC "proof token" minted server-side after Twilio Verify
+ * confirms the OTP. It is the evidence the Cognito custom-auth Lambda checks
+ * to issue session tokens — Cognito never sees the OTP itself, only this proof
+ * that verification succeeded. This bridge is channel-agnostic: it is identical
+ * whether the user verified over SMS, RCS, passkeys or anything else.
+ */
+
 const TOKEN_TTL_SEC = 30;
 
 export function issueProofToken(userId: string, secret: string): string {

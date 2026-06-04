@@ -1,33 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPasskeyChallenge, toTwilioIdentity } from "@/lib/twilio";
+import { startVerification, VerifyChannel } from "@/lib/twilio";
 import { tempCookieOptions } from "@/lib/cookies";
 
 export async function POST(req: NextRequest) {
   try {
-    const { email } = await req.json();
-    if (!email) {
+    const { phoneNumber, channel } = await req.json();
+    if (!phoneNumber) {
       return NextResponse.json(
-        { error: "Email is required" },
+        { error: "Phone number is required" },
         { status: 400 },
       );
     }
 
-    const identity = toTwilioIdentity(email);
-    const challenge = await createPasskeyChallenge(identity);
+    const verifyChannel: VerifyChannel = channel === "rcs" ? "rcs" : "sms";
+
+    // Send the login OTP
+    const verification = await startVerification(phoneNumber, verifyChannel);
 
     const res = NextResponse.json({
-      challengeSid: challenge.sid,
-      authenticationOptions: challenge.options?.publicKey ?? challenge.options,
+      status: verification.status, // "pending"
+      channel: verifyChannel,
     });
 
-    res.cookies.set("passkey_email", email, tempCookieOptions());
-    res.cookies.set("passkey_challenge_sid", challenge.sid, tempCookieOptions());
+    res.cookies.set("verify_phone", phoneNumber, tempCookieOptions());
 
     return res;
   } catch (error) {
     console.error("Login start error:", error);
     return NextResponse.json(
-      { error: "Authentication failed" },
+      { error: "Could not send verification code" },
       { status: 500 },
     );
   }

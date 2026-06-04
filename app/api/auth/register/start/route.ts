@@ -1,33 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPasskeyFactor, toTwilioIdentity } from "@/lib/twilio";
+import { startVerification, VerifyChannel } from "@/lib/twilio";
 import { tempCookieOptions } from "@/lib/cookies";
 
 export async function POST(req: NextRequest) {
   try {
-    const { email } = await req.json();
-    if (!email || typeof email !== "string") {
-      return NextResponse.json({ error: "Email is required" }, { status: 400 });
+    const { phoneNumber, channel } = await req.json();
+    if (!phoneNumber || typeof phoneNumber !== "string") {
+      return NextResponse.json(
+        { error: "Phone number is required" },
+        { status: 400 },
+      );
     }
 
-    const identity = toTwilioIdentity(email);
+    const verifyChannel: VerifyChannel = channel === "rcs" ? "rcs" : "sms";
 
-    // Create Passkey Factor (returns WebAuthn creation options)
-    const factor = await createPasskeyFactor(identity, `passkey-${email}`);
+    // Send the OTP — Twilio Verify owns code generation, TTL and attempts
+    const verification = await startVerification(phoneNumber, verifyChannel);
 
     const res = NextResponse.json({
-      factorSid: factor.sid,
-      registrationOptions: factor.options.publicKey,
+      status: verification.status, // "pending"
+      channel: verifyChannel,
     });
 
-    // Store email and factor SID in cookies for the complete step
-    res.cookies.set("passkey_email", email, tempCookieOptions());
-    res.cookies.set("passkey_factor_sid", factor.sid, tempCookieOptions());
+    // Remember the number for the complete step
+    res.cookies.set("verify_phone", phoneNumber, tempCookieOptions());
 
     return res;
   } catch (error) {
     console.error("Register start error:", error);
     return NextResponse.json(
-      { error: "Registration failed" },
+      { error: "Could not send verification code" },
       { status: 500 },
     );
   }

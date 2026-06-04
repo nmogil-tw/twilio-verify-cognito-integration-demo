@@ -1,163 +1,188 @@
-# Passkey Auth - Twilio Verify Passkey x AWS Cognito
+# OTP Login Demo — Twilio Verify (SMS / RCS) × AWS Cognito
 
-パスキー（WebAuthn）のみでアカウント作成・ログインを行う Next.js アプリケーションです。
-パスワード認証は一切使用しません。
+A Next.js 14 application that authenticates users with a **one-time passcode over SMS or RCS** — no passwords. It combines the **Twilio Verify API** (code generation, delivery, TTL, attempt counting, fraud controls) with the **AWS Cognito Custom Auth Flow** (account management and JWT session token issuance).
 
-## アーキテクチャ
+> Adapted for Rathbones from the original passkey demo. The Cognito custom-auth bridge and Lambda triggers are unchanged; the Twilio layer now uses Verify's `Verifications` / `VerificationCheck` endpoints, and the UI collects a phone number + OTP instead of a WebAuthn credential. Switching a verification from SMS to RCS is a single `Channel` parameter.
 
-- **Twilio Verify Passkeys API** がパスキーの登録・認証（WebAuthn サーバー側処理）を担当
-- **AWS Cognito** がアカウント管理と JWT セッショントークンの発行を担当（Custom Auth Flow）
-- **Next.js API Routes** が両者の橋渡しを行い、HMAC 証明トークンで「パスキー検証済み」を Cognito に伝達
-- **middleware.ts** が Cognito の JWT を検証し、保護ページへのアクセスを制御
+## Architecture
 
-## 技術スタック
+```
+Browser (phone number + OTP)
+  ↕
+Next.js API Routes (orchestrator)
+  ↕                ↕
+Twilio Verify      AWS Cognito
+(send OTP +        (account management +
+ check code)        session token issuance)
+                     ↕
+                   Lambda x3
+                   (HMAC proof token verification)
+```
 
-| 用途                         | 採用技術                                 |
-| ---------------------------- | ---------------------------------------- |
-| フロントエンド / API         | Next.js 14 (App Router)                  |
-| ホスティング                 | AWS App Runner                           |
-| パスキー認証                 | Twilio Verify Passkeys (REST API)        |
-| アカウント管理・トークン発行 | AWS Cognito User Pool (Custom Auth Flow) |
-| シークレット管理             | AWS Secrets Manager                      |
-| WebAuthn クライアント        | @simplewebauthn/browser                  |
-| JWT 検証                     | jose                                     |
-| 言語                         | TypeScript                               |
+**How it works:**
 
-## セットアップ
+1. **Twilio Verify** sends the OTP (`POST /Verifications` with `Channel=sms` or `Channel=rcs`) and validates the code the user types (`POST /VerificationCheck`). Twilio owns code generation, TTL, attempt counting and fraud signals.
+2. **AWS Cognito** manages user accounts and issues JWT session tokens (AccessToken, IdToken, RefreshToken) via the Custom Auth Flow.
+3. **Next.js API Routes** orchestrate between Twilio and Cognito. After Verify returns `approved`, the app mints a short-lived **HMAC proof token** and submits it to Cognito as evidence that verification succeeded — the OTP itself never reaches Cognito.
+4. **Lambda triggers** verify that HMAC proof token inside Cognito's Custom Auth Flow.
+5. **middleware.ts** validates the Cognito JWT on protected routes (`/dashboard`).
 
-詳細な構築手順は [SETUP.md](./SETUP.md) を参照してください。
+## Why this matters for an OTP migration
 
-### クイックスタート
+If you generate and validate codes in-house today (e.g. via AWS SNS / End User Messaging), Verify lets you **rip out** code generation, TTL handling, retry logic, per-region sender provisioning and fraud detection — it's two API calls. Adding a channel (RCS, WhatsApp, Voice) is a parameter change, not a re-architecture. Cognito stays as your IdP; only the OTP send/check calls move to Twilio.
+
+## Tech Stack
+
+| Purpose                    | Technology                               |
+| -------------------------- | ---------------------------------------- |
+| Frontend / API             | Next.js 14 (App Router)                  |
+| Hosting                    | AWS App Runner                           |
+| OTP delivery & verification| Twilio Verify (REST API: SMS / RCS)      |
+| Account & Token Management | AWS Cognito User Pool (Custom Auth Flow) |
+| Secret Management          | AWS Secrets Manager                      |
+| JWT Verification           | jose                                     |
+| Language                   | TypeScript                               |
+
+## Setup
+
+See [SETUP.md](./SETUP.md) for full instructions (Cognito user pool, Lambda triggers, Verify service).
+
+### Quick Start
 
 ```bash
-# 依存パッケージのインストール
+# Install dependencies
 npm install
 
-# 環境変数ファイルの作成
+# Create the env file
 cp .env.local.example .env.local
-# .env.local を編集して各値を設定
+# Edit .env.local with your values
 
-# 開発サーバーの起動
+# Start the dev server
 npm run dev
 ```
 
-### 前提条件
+### Prerequisites
 
 - Node.js 20+
-- AWS CLI（設定済み）
-- Twilio アカウント（Verify サービス + Passkeys RP 設定済み）
-- AWS Cognito ユーザープール（Custom Auth + Lambda トリガー設定済み）
+- AWS CLI (configured)
+- Twilio account with a Verify Service (SMS enabled; RCS enabled + an approved RCS sender if you want to demo RCS)
+- AWS Cognito user pool with Custom Auth + the three Lambda triggers configured
 
-### 環境変数
+### Environment Variables
 
-| 変数名                      | 説明                                    |
-| --------------------------- | --------------------------------------- |
-| `TWILIO_ACCOUNT_SID`        | Twilio アカウント SID                   |
-| `TWILIO_AUTH_TOKEN`         | Twilio Auth Token                       |
-| `TWILIO_VERIFY_SERVICE_SID` | Twilio Verify サービス SID              |
-| `COGNITO_USER_POOL_ID`      | Cognito ユーザープール ID               |
-| `COGNITO_CLIENT_ID`         | Cognito アプリクライアント ID           |
-| `PASSKEY_PROOF_SECRET`      | HMAC 証明トークン用シークレット         |
-| `AWS_REGION`                | AWS リージョン                          |
-| `NEXT_PUBLIC_RP_ID`         | WebAuthn RP ID（ローカル: `localhost`） |
+| Variable                    | Description                                       |
+| --------------------------- | ------------------------------------------------- |
+| `TWILIO_ACCOUNT_SID`        | Twilio Account SID                                |
+| `TWILIO_AUTH_TOKEN`         | Twilio Auth Token                                 |
+| `TWILIO_VERIFY_SERVICE_SID` | Twilio Verify Service SID                         |
+| `COGNITO_USER_POOL_ID`      | Cognito User Pool ID                              |
+| `COGNITO_CLIENT_ID`         | Cognito app client ID                             |
+| `VERIFY_PROOF_SECRET`       | HMAC secret shared with the verify Lambda         |
+| `AWS_REGION`                | AWS region (e.g. `eu-west-1`)                     |
 
-## ディレクトリ構成
+## Directory Structure
 
 ```
-passkey-cognito/
+verify-otp-cognito/
 ├── app/
 │   ├── (auth)/
-│   │   ├── register/page.tsx          # パスキー登録画面
-│   │   └── login/page.tsx             # パスキーログイン画面
-│   ├── dashboard/page.tsx             # 認証後ダッシュボード
+│   │   ├── register/page.tsx          # Sign-up: phone + channel, then OTP
+│   │   └── login/page.tsx             # Login: phone + channel, then OTP
+│   ├── dashboard/page.tsx             # Authenticated dashboard
 │   └── api/auth/
-│       ├── register/start/route.ts    # 登録開始 API
-│       ├── register/complete/route.ts # 登録完了 API
-│       ├── login/start/route.ts       # ログイン開始 API
-│       ├── login/complete/route.ts    # ログイン完了 API
-│       └── logout/route.ts           # ログアウト API
+│       ├── register/start/route.ts    # Sends OTP (POST /Verifications)
+│       ├── register/complete/route.ts # Checks OTP + bridges to Cognito
+│       ├── login/start/route.ts       # Sends OTP (POST /Verifications)
+│       ├── login/complete/route.ts    # Checks OTP + bridges to Cognito
+│       └── logout/route.ts            # Clears session cookies
 ├── lib/
-│   ├── twilio.ts                      # Twilio Passkeys API クライアント
-│   ├── cognito.ts                     # Cognito 操作
-│   ├── passkey-proof.ts               # HMAC 証明トークン生成・検証
-│   ├── secrets.ts                     # シークレット管理
-│   └── cookies.ts                     # Cookie ヘルパー
+│   ├── twilio.ts                      # Verify API client (startVerification/checkVerification)
+│   ├── cognito.ts                     # Cognito operations
+│   ├── verify-proof.ts                # HMAC proof token issue/verify
+│   ├── secrets.ts                     # Secret management
+│   └── cookies.ts                     # Cookie helpers
 ├── lambda/
-│   ├── define-auth-challenge.ts       # Cognito トリガー: フロー制御
-│   ├── create-auth-challenge.ts       # Cognito トリガー: nonce 生成
-│   └── verify-auth-challenge.ts       # Cognito トリガー: 証明トークン検証
-├── middleware.ts                      # JWT 検証ミドルウェア
-├── Dockerfile                         # マルチステージビルド
-└── apprunner.yaml                     # App Runner デプロイ設定
+│   ├── define-auth-challenge.ts       # Cognito trigger: flow control
+│   ├── create-auth-challenge.ts       # Cognito trigger: nonce generation
+│   └── verify-auth-challenge.ts       # Cognito trigger: proof token verification
+├── middleware.ts                      # JWT verification middleware
+├── Dockerfile                         # Multi-stage build
+└── apprunner.yaml                     # App Runner deploy config
 ```
 
-## 認証フロー概要
+## Authentication Flow
 
-### 登録（アカウント作成）
+### Registration (account creation)
 
-1. ユーザーがメールアドレスを入力
-2. Twilio Passkeys API でパスキー登録オプションを取得
-3. ブラウザの WebAuthn API でパスキーを作成（指紋/顔認証）
-4. Twilio で attestation を検証
-5. Cognito にユーザーを作成
-6. HMAC 証明トークンを生成し、Cognito Custom Auth でセッショントークンを取得
-7. Cookie にセッショントークンを保存 → ダッシュボードに遷移
+1. User enters their mobile number (E.164) and picks a channel (SMS or RCS).
+2. Server calls `POST /Verifications` → Twilio sends the OTP on that channel.
+3. User types the code.
+4. Server calls `POST /VerificationCheck` → status `approved`.
+5. Server creates a Cognito user (keyed on phone number) and initiates Custom Auth.
+6. Server mints an HMAC proof token (30-second TTL) bound to Cognito's internal UUID.
+7. Cognito Lambda verifies the proof token → Cognito issues session tokens.
+8. Session tokens are stored in HttpOnly cookies → redirect to dashboard.
 
-### ログイン
+### Login
 
-1. ユーザーがメールアドレスを入力
-2. Twilio Passkeys API で認証チャレンジを取得
-3. ブラウザの WebAuthn API でパスキー認証（指紋/顔認証）
-4. Twilio で assertion を検証
-5. HMAC 証明トークンを生成し、Cognito Custom Auth でセッショントークンを取得
-6. Cookie にセッショントークンを保存 → ダッシュボードに遷移
+1. User enters their mobile number and picks a channel.
+2. Server calls `POST /Verifications` → Twilio sends the OTP.
+3. User types the code.
+4. Server calls `POST /VerificationCheck` → status `approved`.
+5. Server initiates Cognito Custom Auth and mints the HMAC proof token.
+6. Cognito Lambda verifies the proof token → Cognito issues session tokens.
+7. Session tokens are stored in HttpOnly cookies → redirect to dashboard.
 
-## シーケンス図
+## Sequence Diagram (login)
 
-### アカウント作成：パスキー生成
+```mermaid
+sequenceDiagram
+    participant U as User / Browser
+    participant API as Next.js API Routes
+    participant V as Twilio Verify
+    participant C as AWS Cognito
+    participant L as Cognito Lambdas
 
-![アカウント作成：パスキー生成](docs/images/01-register-passkey.png)
+    U->>API: POST /login/start { phone, channel }
+    API->>V: POST /Verifications (To, Channel)
+    V-->>U: OTP via SMS / RCS
+    V-->>API: status = pending
+    U->>API: POST /login/complete { code }
+    API->>V: POST /VerificationCheck (To, Code)
+    V-->>API: status = approved
+    API->>C: AdminInitiateAuth (CUSTOM_AUTH)
+    C->>L: DefineAuthChallenge / CreateAuthChallenge
+    C-->>API: Session + internal UUID
+    API->>API: issueProofToken(UUID, secret)
+    API->>C: AdminRespondToAuthChallenge (proof token)
+    C->>L: VerifyAuthChallengeResponse (HMAC check)
+    L-->>C: answerCorrect = true
+    C-->>API: AccessToken / IdToken / RefreshToken
+    API-->>U: Set HttpOnly cookies → /dashboard
+```
 
-### アカウント作成：Cognito トークン取得 #1
+## Key Design Decisions
 
-![アカウント作成：Cognito トークン取得 #1](docs/images/02-register-cognito-1.png)
+- **No password authentication**: the Cognito app client allows only `ALLOW_CUSTOM_AUTH` and `ALLOW_REFRESH_TOKEN_AUTH`. Users are created with random permanent passwords nobody knows.
+- **OTP never reaches Cognito**: Twilio verifies the code; Cognito only ever sees the HMAC proof token. This keeps the OTP secret on the Twilio side and makes the Cognito challenge channel-agnostic.
+- **Cognito internal UUID**: with phone-number-as-username, Cognito's internal `userName` is a UUID. The HMAC proof token must use this UUID (from the `AdminInitiateAuth` response) so it matches `event.userName` in the Lambda.
+- **Admin API required**: auth is initiated with `AdminInitiateAuth`, so the challenge response uses `AdminRespondToAuthChallengeCommand`.
+- **SMS vs RCS is one parameter**: `startVerification(to, channel)` only changes `Channel`. Verify handles RCS capability detection and fallback service-side; RCS requires the channel to be enabled on the Verify Service and an approved RCS sender.
+- **Twilio REST API instead of SDK**: the demo calls Verify's `/Verifications` and `/VerificationCheck` endpoints directly via `fetch` with form-encoded bodies — no SDK dependency in the request path.
 
-### アカウント作成：Cognito トークン取得 #2
+## Deploy
 
-![アカウント作成：Cognito トークン取得 #2](docs/images/03-register-cognito-2.png)
-
-### ログインフロー：パスキー認証 #1
-
-![ログインフロー：パスキー認証 #1](docs/images/04-login-passkey-1.png)
-
-### ログインフロー：パスキー認証 #2
-
-![ログインフロー：パスキー認証 #2](docs/images/05-login-passkey-2.png)
-
-### ログインフロー：Cognito トークン取得 #1
-
-![ログインフロー：Cognito トークン取得 #1](docs/images/06-login-cognito-1.png)
-
-### ログインフロー：Cognito トークン取得 #2
-
-![ログインフロー：Cognito トークン取得 #2](docs/images/07-login-cognito-2.png)
-
-## デプロイ
-
-### Docker ビルド
+### Docker build
 
 ```bash
-docker build -t passkey-cognito .
+docker build -t verify-otp-cognito .
 ```
 
 ### App Runner
 
-`apprunner.yaml` を使用してデプロイします。
-本番環境では Secrets Manager から `TWILIO_AUTH_TOKEN` と `PASSKEY_PROOF_SECRET` を取得します。
+Deploy with `apprunner.yaml`. In production, `TWILIO_AUTH_TOKEN` and `VERIFY_PROOF_SECRET` are read from Secrets Manager. See [SETUP.md](./SETUP.md) section 7.
 
-詳細は [SETUP.md](./SETUP.md) のセクション 7 を参照してください。
-
-## Lambda のビルドとデプロイ
+## Building and deploying the Lambdas
 
 ```bash
 cd lambda
@@ -171,118 +196,4 @@ zip create-auth-challenge.zip create-auth-challenge.js
 zip verify-auth-challenge.zip verify-auth-challenge.js
 ```
 
-詳細は [SETUP.md](./SETUP.md) のセクション 3 を参照してください。
-
----
-
-## English
-
-### Overview
-
-A Next.js 14 application that implements **passkey-only authentication** (WebAuthn) — no passwords at all. It combines **Twilio Verify Passkeys API** for WebAuthn server-side processing with **AWS Cognito Custom Auth Flow** for session token issuance.
-
-### Architecture
-
-```
-Browser (WebAuthn)
-  ↕
-Next.js API Routes (orchestrator)
-  ↕                ↕
-Twilio Verify      AWS Cognito
-(passkey            (account management +
- verification)      session token issuance)
-                     ↕
-                   Lambda x3
-                   (HMAC proof token verification)
-```
-
-**How it works:**
-
-1. **Twilio Verify** handles passkey registration and authentication (challenge generation, attestation/assertion verification, public key storage)
-2. **AWS Cognito** manages user accounts and issues JWT session tokens (AccessToken, IdToken, RefreshToken) via Custom Auth Flow
-3. **Next.js API Routes** orchestrate between Twilio and Cognito — after Twilio verifies the passkey, an HMAC proof token is generated and submitted to Cognito as proof that passkey verification was successful
-4. **Lambda triggers** verify the HMAC proof token inside Cognito's Custom Auth Flow
-5. **middleware.ts** validates the JWT session token on protected routes (`/dashboard`)
-
-### Tech Stack
-
-| Purpose                    | Technology                               |
-| -------------------------- | ---------------------------------------- |
-| Frontend / API             | Next.js 14 (App Router)                  |
-| Hosting                    | AWS App Runner                           |
-| Passkey Authentication     | Twilio Verify Passkeys (REST API)        |
-| Account & Token Management | AWS Cognito User Pool (Custom Auth Flow) |
-| Secret Management          | AWS Secrets Manager                      |
-| WebAuthn Client            | @simplewebauthn/browser                  |
-| JWT Verification           | jose                                     |
-| Language                   | TypeScript                               |
-
-### Registration Flow
-
-1. User enters email address
-2. Server creates a Passkey Factor via Twilio API → returns WebAuthn creation options
-3. Browser calls `startRegistration()` → OS passkey creation dialog (fingerprint/face)
-4. Server sends the attestation (credential) to Twilio for verification
-5. Server creates a Cognito user and initiates Custom Auth
-6. Server generates an HMAC proof token (30-second TTL) using the Cognito internal UUID
-7. Cognito Lambda verifies the proof token → Cognito issues session tokens
-8. Session tokens are stored in HttpOnly cookies → redirect to dashboard
-
-### Authentication Flow
-
-1. User enters email address
-2. Server creates a Passkey Challenge via Twilio API → returns WebAuthn assertion options
-3. Browser calls `startAuthentication()` → OS passkey authentication dialog (fingerprint/face)
-4. Server sends the assertion to Twilio for verification
-5. Server initiates Cognito Custom Auth and generates an HMAC proof token
-6. Cognito Lambda verifies the proof token → Cognito issues session tokens
-7. Session tokens are stored in HttpOnly cookies → redirect to dashboard
-
-### Sequence Diagrams
-
-#### Account Creation: Passkey Generation
-
-![Account Creation: Passkey Generation](docs/images/08-en-register-passkey.png)
-
-#### Account Creation: Cognito Token Retrieval #1
-
-![Account Creation: Cognito Token Retrieval #1](docs/images/09-en-register-cognito-1.png)
-
-#### Account Creation: Cognito Token Retrieval #2
-
-![Account Creation: Cognito Token Retrieval #2](docs/images/10-en-register-cognito-2.png)
-
-#### Login Flow: Passkey Authentication #1
-
-![Login Flow: Passkey Authentication #1](docs/images/11-en-login-passkey-1.png)
-
-#### Login Flow: Passkey Authentication #2
-
-![Login Flow: Passkey Authentication #2](docs/images/12-en-login-passkey-2.png)
-
-#### Login Flow: Cognito Token Retrieval #1
-
-![Login Flow: Cognito Token Retrieval #1](docs/images/13-en-login-cognito-1.png)
-
-#### Login Flow: Cognito Token Retrieval #2
-
-![Login Flow: Cognito Token Retrieval #2](docs/images/14-en-login-cognito-2.png)
-
-### Key Design Decisions
-
-- **No password authentication**: Cognito app client only allows `ALLOW_CUSTOM_AUTH` and `ALLOW_REFRESH_TOKEN_AUTH`. Users are created with random permanent passwords that nobody knows.
-- **Twilio identity constraint**: Twilio's identity field only accepts alphanumeric characters and hyphens. Email addresses are converted to SHA256 hashes before being sent to Twilio.
-- **Cognito internal UUID**: When using `username-attributes email`, Cognito's internal `userName` is a UUID, not the email. The HMAC proof token must use this UUID (retrieved from `AdminInitiateAuth` response) to match `event.userName` in the Lambda trigger.
-- **Admin API required**: Since auth is initiated with `AdminInitiateAuth`, the challenge response must use `AdminRespondToAuthChallengeCommand` (not the non-Admin version).
-- **Twilio REST API instead of SDK**: The Twilio Node.js SDK's Entity/Factor API is for Push/TOTP, not Passkeys. This app calls the Passkeys-specific endpoints (`/Passkeys/Factors`, `/Passkeys/VerifyFactor`, `/Passkeys/Challenges`, `/Passkeys/ApproveChallenge`) directly via `fetch`.
-
-### Quick Start
-
-```bash
-npm install
-cp .env.local.example .env.local
-# Edit .env.local with your values
-npm run dev
-```
-
-See [SETUP.md](./SETUP.md) for detailed setup instructions including AWS Cognito, Lambda triggers, and Twilio Verify service configuration.
+See [SETUP.md](./SETUP.md) section 3 for the full Lambda + Cognito trigger wiring.

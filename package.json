@@ -1,7 +1,7 @@
 {
-  "name": "passkey-cognito",
+  "name": "verify-otp-cognito",
   "version": "1.0.0",
-  "description": "",
+  "description": "SMS/RCS OTP authentication demo with Twilio Verify and AWS Cognito custom auth flow",
   "main": "index.js",
   "scripts": {
     "dev": "next dev",
@@ -15,7 +15,6 @@
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.1019.0",
     "@aws-sdk/client-secrets-manager": "^3.1019.0",
-    "@simplewebauthn/browser": "^13.3.0",
     "@tailwindcss/postcss": "^4.2.2",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
