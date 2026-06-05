@@ -2,7 +2,7 @@
 
 A Next.js 14 application that authenticates users with a **one-time passcode over SMS or RCS** — no passwords. It combines the **Twilio Verify API** (code generation, delivery, TTL, attempt counting, fraud controls) with the **AWS Cognito Custom Auth Flow** (account management and JWT session token issuance).
 
-> Adapted for Rathbones from the original passkey demo. The Cognito custom-auth bridge and Lambda triggers are unchanged; the Twilio layer now uses Verify's `Verifications` / `VerificationCheck` endpoints, and the UI collects a phone number + OTP instead of a WebAuthn credential. Switching a verification from SMS to RCS is a single `Channel` parameter.
+> Adapted from the original passkey demo. The Cognito custom-auth bridge and Lambda triggers are unchanged; the Twilio layer now uses Verify's `Verifications` / `VerificationCheck` endpoints, and the UI collects a phone number + OTP instead of a WebAuthn credential. Switching a verification from SMS to RCS is a single `Channel` parameter.
 
 ## Architecture
 

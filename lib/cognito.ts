@@ -15,7 +15,7 @@ const clientId = () => process.env.COGNITO_CLIENT_ID!;
 
 /**
  * Create a Cognito user keyed on their phone number (E.164).
- * In a real My Rathbones-style deployment the user already exists and is keyed
+ * In a real production deployment the user already exists and is keyed
  * on whatever identifier the portal uses; here we provision on first sight so
  * the demo is self-contained.
  */
