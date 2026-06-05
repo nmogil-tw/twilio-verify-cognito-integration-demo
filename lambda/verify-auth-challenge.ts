@@ -27,7 +27,7 @@ export const handler = async (
 ): Promise<VerifyAuthChallengeResponseTriggerEvent> => {
   try {
     const token = event.request.challengeAnswer;
-    const secret = process.env.PASSKEY_PROOF_SECRET!;
+    const secret = process.env.VERIFY_PROOF_SECRET!;
     const userId = verifyProofToken(token, secret);
 
     console.log("DEBUG:", JSON.stringify({

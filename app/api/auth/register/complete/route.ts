@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyPasskeyFactor } from "@/lib/twilio";
-import { createCognitoUser, initiateCustomAuth, respondToCustomChallenge } from "@/lib/cognito";
-import { issueProofToken } from "@/lib/passkey-proof";
+import { checkVerification } from "@/lib/twilio";
+import {
+  createCognitoUser,
+  initiateCustomAuth,
+  respondToCustomChallenge,
+} from "@/lib/cognito";
+import { issueProofToken } from "@/lib/verify-proof";
 import { getSecret } from "@/lib/secrets";
 import {
   authCookieOptions,
@@ -11,31 +15,31 @@ import {
 
 export async function POST(req: NextRequest) {
   try {
-    const { credential } = await req.json();
-    const email = req.cookies.get("passkey_email")?.value;
+    const { code } = await req.json();
+    const phoneNumber = req.cookies.get("verify_phone")?.value;
 
-    if (!email || !credential) {
+    if (!phoneNumber || !code) {
       return NextResponse.json(
-        { error: "Missing registration data" },
+        { error: "Missing verification data" },
         { status: 400 },
       );
     }
 
-    // Verify factor via Passkeys API
-    const result = await verifyPasskeyFactor(credential);
+    // Check the OTP the user typed with Twilio Verify
+    const result = await checkVerification(phoneNumber, code);
 
-    if (result.status !== "verified") {
+    if (result.status !== "approved") {
       return NextResponse.json(
-        { error: "Authentication failed" },
+        { error: "Invalid or expired code" },
         { status: 401 },
       );
     }
 
-    // Create Cognito user (email as username)
-    await createCognitoUser(email);
+    // Create Cognito user (phone number as username)
+    await createCognitoUser(phoneNumber);
 
     // Initiate Cognito Custom Auth
-    const authRes = await initiateCustomAuth(email);
+    const authRes = await initiateCustomAuth(phoneNumber);
     if (!authRes.Session) {
       return NextResponse.json(
         { error: "Authentication failed" },
@@ -44,8 +48,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Use Cognito's internal USERNAME (UUID) for the proof token
-    const cognitoUsername = authRes.ChallengeParameters?.USERNAME ?? email;
-    const secret = await getSecret("PASSKEY_PROOF_SECRET");
+    const cognitoUsername = authRes.ChallengeParameters?.USERNAME ?? phoneNumber;
+    const secret = await getSecret("VERIFY_PROOF_SECRET");
     const proofToken = issueProofToken(cognitoUsername, secret);
 
     const challengeRes = await respondToCustomChallenge(
@@ -83,8 +87,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Clear temp cookies
-    res.cookies.set("passkey_email", "", deleteCookieOptions());
-    res.cookies.set("passkey_factor_sid", "", deleteCookieOptions());
+    res.cookies.set("verify_phone", "", deleteCookieOptions());
 
     return res;
   } catch (error) {

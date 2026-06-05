@@ -1,33 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPasskeyFactor, toTwilioIdentity } from "@/lib/twilio";
+import {
+  startVerification,
+  deliveredChannel,
+  normalizePhone,
+} from "@/lib/twilio";
 import { tempCookieOptions } from "@/lib/cookies";
 
 export async function POST(req: NextRequest) {
   try {
-    const { email } = await req.json();
-    if (!email || typeof email !== "string") {
-      return NextResponse.json({ error: "Email is required" }, { status: 400 });
+    const { phoneNumber: rawPhone } = await req.json();
+    if (!rawPhone || typeof rawPhone !== "string") {
+      return NextResponse.json(
+        { error: "Phone number is required" },
+        { status: 400 },
+      );
     }
 
-    const identity = toTwilioIdentity(email);
+    // Canonicalize to clean E.164 so Twilio and Cognito key on the same value
+    const phoneNumber = normalizePhone(rawPhone);
 
-    // Create Passkey Factor (returns WebAuthn creation options)
-    const factor = await createPasskeyFactor(identity, `passkey-${email}`);
+    // Send the OTP — Twilio Verify owns code generation, TTL and attempts.
+    // Always starts on SMS; Verify auto-upgrades to RCS when supported.
+    const verification = await startVerification(phoneNumber);
 
     const res = NextResponse.json({
-      factorSid: factor.sid,
-      registrationOptions: factor.options.publicKey,
+      status: verification.status, // "pending"
+      channel: deliveredChannel(verification), // "rcs" if upgraded, else "sms"
     });
 
-    // Store email and factor SID in cookies for the complete step
-    res.cookies.set("passkey_email", email, tempCookieOptions());
-    res.cookies.set("passkey_factor_sid", factor.sid, tempCookieOptions());
+    // Remember the number for the complete step
+    res.cookies.set("verify_phone", phoneNumber, tempCookieOptions());
 
     return res;
   } catch (error) {
     console.error("Register start error:", error);
     return NextResponse.json(
-      { error: "Registration failed" },
+      { error: "Could not send verification code" },
       { status: 500 },
     );
   }

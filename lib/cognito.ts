@@ -6,25 +6,30 @@ import {
   AdminRespondToAuthChallengeCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import crypto from "crypto";
+import { awsClientConfig } from "./aws-config";
 
-const client = new CognitoIdentityProviderClient({
-  region: process.env.AWS_REGION ?? "ap-northeast-1",
-});
+const client = new CognitoIdentityProviderClient(awsClientConfig());
 
 const userPoolId = () => process.env.COGNITO_USER_POOL_ID!;
 const clientId = () => process.env.COGNITO_CLIENT_ID!;
 
-export async function createCognitoUser(email: string) {
+/**
+ * Create a Cognito user keyed on their phone number (E.164).
+ * In a real production deployment the user already exists and is keyed
+ * on whatever identifier the portal uses; here we provision on first sight so
+ * the demo is self-contained.
+ */
+export async function createCognitoUser(phoneNumber: string) {
   try {
-    // Step 1: Create user (suppress invitation email)
+    // Step 1: Create user (suppress invitation message)
     await client.send(
       new AdminCreateUserCommand({
         UserPoolId: userPoolId(),
-        Username: email,
+        Username: phoneNumber,
         MessageAction: "SUPPRESS",
         UserAttributes: [
-          { Name: "email", Value: email },
-          { Name: "email_verified", Value: "true" },
+          { Name: "phone_number", Value: phoneNumber },
+          { Name: "phone_number_verified", Value: "true" },
         ],
       }),
     );
@@ -33,7 +38,7 @@ export async function createCognitoUser(email: string) {
     await client.send(
       new AdminSetUserPasswordCommand({
         UserPoolId: userPoolId(),
-        Username: email,
+        Username: phoneNumber,
         Password: crypto.randomUUID() + "Aa1!",
         Permanent: true,
       }),
@@ -44,14 +49,14 @@ export async function createCognitoUser(email: string) {
   }
 }
 
-export async function initiateCustomAuth(email: string) {
+export async function initiateCustomAuth(username: string) {
   const res = await client.send(
     new AdminInitiateAuthCommand({
       UserPoolId: userPoolId(),
       ClientId: clientId(),
       AuthFlow: "CUSTOM_AUTH",
       AuthParameters: {
-        USERNAME: email,
+        USERNAME: username,
       },
     }),
   );
@@ -60,7 +65,7 @@ export async function initiateCustomAuth(email: string) {
 
 export async function respondToCustomChallenge(
   session: string,
-  email: string,
+  username: string,
   answer: string,
 ) {
   const res = await client.send(
@@ -70,7 +75,7 @@ export async function respondToCustomChallenge(
       ChallengeName: "CUSTOM_CHALLENGE",
       Session: session,
       ChallengeResponses: {
-        USERNAME: email,
+        USERNAME: username,
         ANSWER: answer,
       },
     }),

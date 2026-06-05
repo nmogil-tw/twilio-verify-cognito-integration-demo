@@ -2,12 +2,11 @@ import {
   SecretsManagerClient,
   GetSecretValueCommand,
 } from "@aws-sdk/client-secrets-manager";
+import { awsClientConfig } from "./aws-config";
 
 let cache: Record<string, string> | null = null;
 
-const client = new SecretsManagerClient({
-  region: process.env.AWS_REGION ?? "ap-northeast-1",
-});
+const client = new SecretsManagerClient(awsClientConfig());
 
 async function fetchSecret(name: string): Promise<string> {
   const res = await client.send(
@@ -24,15 +23,15 @@ export async function getSecret(key: string): Promise<string> {
   }
 
   if (!cache) {
-    const [twilioRaw, passkeyRaw] = await Promise.all([
+    const [twilioRaw, proofRaw] = await Promise.all([
       fetchSecret("myapp/twilio"),
-      fetchSecret("myapp/passkey"),
+      fetchSecret("myapp/verify"),
     ]);
     const twilio = JSON.parse(twilioRaw);
-    const passkey = JSON.parse(passkeyRaw);
+    const proof = JSON.parse(proofRaw);
     cache = {
       TWILIO_AUTH_TOKEN: twilio.TWILIO_AUTH_TOKEN,
-      PASSKEY_PROOF_SECRET: passkey.PASSKEY_PROOF_SECRET,
+      VERIFY_PROOF_SECRET: proof.VERIFY_PROOF_SECRET,
     };
   }
 
