@@ -1,10 +1,15 @@
 import { getSecret } from "./secrets";
 
 /**
- * Twilio Verify channels used by this demo.
- * SMS is the default; RCS gives an IP-based, branded delivery with read
- * receipts and falls back automatically when the device/carrier can't receive
- * it (Verify handles capability detection service-side).
+ * The channel a verification was actually *delivered* on.
+ *
+ * Note: RCS is NOT a channel you request. Verify's "RCS Upgrade" (on by
+ * default) transparently upgrades an `sms` verification to RCS when the
+ * recipient's device supports it and an approved RCS sender exists, falling
+ * back to SMS otherwise — all service-side. So we always START on `sms` and
+ * read back which channel Verify chose from `send_code_attempts`.
+ * `channel=rcs` and `channel=auto` are rejected (HTTP 400, error 60200) on a
+ * standard service.
  */
 export type VerifyChannel = "sms" | "rcs";
 
@@ -53,19 +58,31 @@ function servicePath() {
 }
 
 /**
- * Start a verification — sends an OTP to the phone number on the chosen
- * channel. Twilio generates the code, owns the TTL and attempt counting.
+ * Start a verification — sends an OTP. Twilio generates the code, owns the TTL
+ * and attempt counting. We always request the `sms` channel; Verify's RCS
+ * Upgrade decides at delivery time whether to send over RCS or SMS.
  *
  * POST /v2/Services/{ServiceSid}/Verifications
- * Returns an object whose `status` is "pending" on success.
+ * Returns an object whose `status` is "pending" on success. The channel that
+ * was actually used is in `send_code_attempts[last].channel`.
  */
-export async function startVerification(to: string, channel: VerifyChannel) {
+export async function startVerification(to: string) {
   const data = await twilioFetch(`${servicePath()}/Verifications`, {
     To: to,
-    Channel: channel,
+    Channel: "sms",
   });
   // data.sid = Verification SID (VE...), data.status = "pending"
   return data;
+}
+
+/**
+ * Read which channel Verify actually delivered on from a Verifications
+ * response. Returns "rcs" if the last attempt was upgraded to RCS, else "sms".
+ */
+export function deliveredChannel(verification: any): VerifyChannel {
+  const attempts = verification?.send_code_attempts;
+  const last = Array.isArray(attempts) ? attempts[attempts.length - 1] : null;
+  return last?.channel === "rcs" ? "rcs" : "sms";
 }
 
 /**

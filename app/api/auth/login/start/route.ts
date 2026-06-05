@@ -1,25 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
-import { startVerification, VerifyChannel } from "@/lib/twilio";
+import {
+  startVerification,
+  deliveredChannel,
+  normalizePhone,
+} from "@/lib/twilio";
 import { tempCookieOptions } from "@/lib/cookies";
 
 export async function POST(req: NextRequest) {
   try {
-    const { phoneNumber, channel } = await req.json();
-    if (!phoneNumber) {
+    const { phoneNumber: rawPhone } = await req.json();
+    if (!rawPhone) {
       return NextResponse.json(
         { error: "Phone number is required" },
         { status: 400 },
       );
     }
 
-    const verifyChannel: VerifyChannel = channel === "rcs" ? "rcs" : "sms";
+    // Canonicalize to clean E.164 so Twilio and Cognito key on the same value
+    const phoneNumber = normalizePhone(rawPhone);
 
-    // Send the login OTP
-    const verification = await startVerification(phoneNumber, verifyChannel);
+    // Send the login OTP. Always starts on SMS; Verify auto-upgrades to RCS
+    // when the device supports it.
+    const verification = await startVerification(phoneNumber);
 
     const res = NextResponse.json({
       status: verification.status, // "pending"
-      channel: verifyChannel,
+      channel: deliveredChannel(verification), // "rcs" if upgraded, else "sms"
     });
 
     res.cookies.set("verify_phone", phoneNumber, tempCookieOptions());
