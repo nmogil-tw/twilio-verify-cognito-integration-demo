@@ -8,6 +8,17 @@ import { getSecret } from "./secrets";
  */
 export type VerifyChannel = "sms" | "rcs";
 
+/**
+ * Normalize a user-typed phone number to clean E.164.
+ * Strips spaces, hyphens, parens and dots (e.g. "+44 7878 941747" →
+ * "+447878941747"). Twilio Verify tolerates the formatting, but Cognito's
+ * AdminCreateUser username rejects spaces — and both must key on the SAME
+ * canonical value, so we normalize once at the entry point.
+ */
+export function normalizePhone(input: string): string {
+  return input.replace(/[\s\-().]/g, "");
+}
+
 const BASE = "https://verify.twilio.com";
 
 async function twilioFetch(path: string, params: Record<string, string>) {

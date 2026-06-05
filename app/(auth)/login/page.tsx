@@ -9,7 +9,10 @@ type Step = "phone" | "code";
 
 export default function LoginPage() {
   const [phoneNumber, setPhoneNumber] = useState("");
-  const [channel, setChannel] = useState<Channel>("sms");
+  // The channel Verify actually delivered on (read back from the start
+  // response). RCS isn't user-selectable — Verify upgrades SMS→RCS when the
+  // device supports it.
+  const [deliveredChannel, setDeliveredChannel] = useState<Channel>("sms");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<Step>("phone");
   const [error, setError] = useState("");
@@ -25,14 +28,15 @@ export default function LoginPage() {
       const startRes = await fetch("/api/auth/login/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber, channel }),
+        body: JSON.stringify({ phoneNumber }),
       });
 
+      const data = await startRes.json();
       if (!startRes.ok) {
-        const data = await startRes.json();
         throw new Error(data.error || "Could not send code");
       }
 
+      setDeliveredChannel(data.channel === "rcs" ? "rcs" : "sms");
       setStep("code");
     } catch (err: any) {
       setError(err.message || "Could not send code");
@@ -94,28 +98,6 @@ export default function LoginPage() {
               </p>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-1">
-                Delivery channel
-              </label>
-              <div className="flex gap-2">
-                {(["sms", "rcs"] as Channel[]).map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => setChannel(c)}
-                    className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium ${
-                      channel === c
-                        ? "border-blue-600 bg-blue-50 text-blue-700"
-                        : "border-gray-300 hover:bg-gray-50"
-                    }`}
-                  >
-                    {c.toUpperCase()}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {error && (
               <p className="text-sm text-red-600 bg-red-50 p-3 rounded-lg">
                 {error}
@@ -134,7 +116,7 @@ export default function LoginPage() {
           <form onSubmit={handleVerifyCode} className="space-y-4">
             <div>
               <label htmlFor="code" className="block text-sm font-medium mb-1">
-                Enter the {channel.toUpperCase()} code
+                Enter the {deliveredChannel.toUpperCase()} code
               </label>
               <input
                 id="code"
@@ -148,7 +130,8 @@ export default function LoginPage() {
                 placeholder="123456"
               />
               <p className="mt-1 text-xs text-gray-500">
-                Sent to {phoneNumber}
+                Sent to {phoneNumber} via {deliveredChannel.toUpperCase()}
+                {deliveredChannel === "rcs" && " (upgraded by Verify)"}
               </p>
             </div>
 
