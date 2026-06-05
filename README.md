@@ -146,9 +146,10 @@ sequenceDiagram
     participant C as AWS Cognito
     participant L as Cognito Lambdas
 
-    U->>API: POST /login/start { phone, channel }
-    API->>V: POST /Verifications (To, Channel)
-    V-->>U: OTP via SMS / RCS
+    U->>API: POST /login/start { phone }
+    API->>API: normalizePhone(phone) → E.164
+    API->>V: POST /Verifications (To, Channel=sms)
+    V-->>U: OTP via SMS (upgraded to RCS if device supports it)
     V-->>API: status = pending
     U->>API: POST /login/complete { code }
     API->>V: POST /VerificationCheck (To, Code)
