@@ -21,7 +21,7 @@ Twilio Verify      AWS Cognito
 
 **How it works:**
 
-1. **Twilio Verify** sends the OTP (`POST /Verifications` with `Channel=sms` or `Channel=rcs`) and validates the code the user types (`POST /VerificationCheck`). Twilio owns code generation, TTL, attempt counting and fraud signals.
+1. **Twilio Verify** sends the OTP (`POST /Verifications` with `Channel=sms`) and validates the code the user types (`POST /VerificationCheck`). Twilio owns code generation, TTL, attempt counting and fraud signals. RCS is not a separate channel you request — Verify's **RCS Upgrade** (on by default) transparently upgrades an `sms` verification to RCS when the recipient's device supports it, falling back to SMS otherwise. The app reads which channel was actually used from the `send_code_attempts` array in the response.
 2. **AWS Cognito** manages user accounts and issues JWT session tokens (AccessToken, IdToken, RefreshToken) via the Custom Auth Flow.
 3. **Next.js API Routes** orchestrate between Twilio and Cognito. After Verify returns `approved`, the app mints a short-lived **HMAC proof token** and submits it to Cognito as evidence that verification succeeded — the OTP itself never reaches Cognito.
 4. **Lambda triggers** verify that HMAC proof token inside Cognito's Custom Auth Flow.
@@ -65,7 +65,7 @@ npm run dev
 
 - Node.js 20+
 - AWS CLI (configured)
-- Twilio account with a Verify Service (SMS enabled; RCS enabled + an approved RCS sender if you want to demo RCS)
+- Twilio account with a Verify Service (SMS enabled; an approved RCS sender enables branded RCS Upgrade for capable devices)
 - AWS Cognito user pool with Custom Auth + the three Lambda triggers configured
 
 ### Environment Variables
@@ -78,7 +78,10 @@ npm run dev
 | `COGNITO_USER_POOL_ID`      | Cognito User Pool ID                              |
 | `COGNITO_CLIENT_ID`         | Cognito app client ID                             |
 | `VERIFY_PROOF_SECRET`       | HMAC secret shared with the verify Lambda         |
-| `AWS_REGION`                | AWS region (e.g. `eu-west-1`)                     |
+| `APP_AWS_REGION`            | AWS region (e.g. `eu-west-2`)                     |
+| `APP_AWS_PROFILE`           | Local dev only: named CLI profile for AWS creds (omit in production to use the instance role) |
+
+> The AWS region and credentials use `APP_`-prefixed names on purpose: a plain `AWS_PROFILE` / `AWS_REGION` exported in your shell (e.g. a corporate SSO profile) would otherwise override `.env.local` and point the app at the wrong account. See `lib/aws-config.ts`.
 
 ## Directory Structure
 
@@ -114,8 +117,8 @@ verify-otp-cognito/
 
 ### Registration (account creation)
 
-1. User enters their mobile number (E.164) and picks a channel (SMS or RCS).
-2. Server calls `POST /Verifications` → Twilio sends the OTP on that channel.
+1. User enters their mobile number (any common format — the server normalizes it to E.164).
+2. Server calls `POST /Verifications` (`Channel=sms`) → Twilio sends the OTP, upgrading to RCS when the device supports it.
 3. User types the code.
 4. Server calls `POST /VerificationCheck` → status `approved`.
 5. Server creates a Cognito user (keyed on phone number) and initiates Custom Auth.
@@ -125,8 +128,8 @@ verify-otp-cognito/
 
 ### Login
 
-1. User enters their mobile number and picks a channel.
-2. Server calls `POST /Verifications` → Twilio sends the OTP.
+1. User enters their mobile number (normalized to E.164 server-side).
+2. Server calls `POST /Verifications` (`Channel=sms`, may upgrade to RCS) → Twilio sends the OTP.
 3. User types the code.
 4. Server calls `POST /VerificationCheck` → status `approved`.
 5. Server initiates Cognito Custom Auth and mints the HMAC proof token.

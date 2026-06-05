@@ -29,7 +29,10 @@ Edit `.env.local` and set the following:
 | `COGNITO_USER_POOL_ID`      | Cognito User Pool ID                         |
 | `COGNITO_CLIENT_ID`         | Cognito app client ID                        |
 | `VERIFY_PROOF_SECRET`       | HMAC signing secret (generated below)        |
-| `AWS_REGION`                | AWS region (e.g. `eu-west-1`)                |
+| `APP_AWS_REGION`            | AWS region (e.g. `eu-west-2`)                |
+| `APP_AWS_PROFILE`           | Local dev only: named CLI profile for AWS creds |
+
+> `APP_AWS_REGION` / `APP_AWS_PROFILE` are intentionally `APP_`-prefixed so an ambient shell `AWS_PROFILE` / `AWS_REGION` (e.g. an SSO profile) can't override which account the app uses. In production (App Runner) omit `APP_AWS_PROFILE` and the SDK uses the instance role. See `lib/aws-config.ts`.
 
 ### Generating VERIFY_PROOF_SECRET
 
@@ -51,14 +54,15 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 aws cognito-idp create-user-pool \
   --pool-name verify-otp-pool \
   --schema '[{"Name":"phone_number","Required":true,"Mutable":true}]' \
-  --auto-verified-attributes phone_number \
   --username-attributes phone_number \
-  --region eu-west-1
+  --region eu-west-2
 ```
 
 Note the returned `UserPool.Id`.
 
 **Note:** with `username-attributes phone_number`, Cognito's internal `userName` is a UUID (not the phone number). The HMAC proof token uses this UUID.
+
+**Note:** do **not** add `--auto-verified-attributes phone_number` — Cognito then demands its own SMS/SNS configuration (`SMS configuration is required when phone_number is selected for auto verification`). In this architecture Twilio Verify owns the OTP; the app sets `phone_number_verified=true` itself in `createCognitoUser`, so Cognito never needs to send SMS.
 
 ### 2-2. Create the app client
 
@@ -68,7 +72,7 @@ aws cognito-idp create-user-pool-client \
   --client-name verify-otp-client \
   --explicit-auth-flows ALLOW_CUSTOM_AUTH ALLOW_REFRESH_TOKEN_AUTH \
   --no-generate-secret \
-  --region eu-west-1
+  --region eu-west-2
 ```
 
 Note the returned `UserPoolClient.ClientId`.
@@ -114,7 +118,7 @@ aws lambda create-function \
   --handler define-auth-challenge.handler \
   --zip-file fileb://define-auth-challenge.zip \
   --role <LAMBDA_EXECUTION_ROLE_ARN> \
-  --region eu-west-1
+  --region eu-west-2
 ```
 
 (Repeat for `create-auth-challenge` and `verify-auth-challenge`.)
@@ -127,7 +131,7 @@ Set the **same value** as the `VERIFY_PROOF_SECRET` generated in step 1:
 aws lambda update-function-configuration \
   --function-name verify-auth-challenge \
   --environment "Variables={VERIFY_PROOF_SECRET=<YOUR_SECRET>}" \
-  --region eu-west-1
+  --region eu-west-2
 ```
 
 ### 3-4. Wire the Cognito triggers
@@ -150,7 +154,7 @@ aws cognito-idp update-user-pool \
     "CreateAuthChallenge": "<CREATE_LAMBDA_ARN>",
     "VerifyAuthChallengeResponse": "<VERIFY_LAMBDA_ARN>"
   }' \
-  --region eu-west-1
+  --region eu-west-2
 ```
 
 ### 3-5. Grant Cognito permission to invoke each Lambda
@@ -163,21 +167,21 @@ aws lambda add-permission \
   --statement-id cognito-trigger \
   --action lambda:InvokeFunction \
   --principal cognito-idp.amazonaws.com \
-  --source-arn arn:aws:cognito-idp:eu-west-1:<ACCOUNT_ID>:userpool/<USER_POOL_ID>
+  --source-arn arn:aws:cognito-idp:eu-west-2:<ACCOUNT_ID>:userpool/<USER_POOL_ID>
 
 aws lambda add-permission \
   --function-name create-auth-challenge \
   --statement-id cognito-trigger \
   --action lambda:InvokeFunction \
   --principal cognito-idp.amazonaws.com \
-  --source-arn arn:aws:cognito-idp:eu-west-1:<ACCOUNT_ID>:userpool/<USER_POOL_ID>
+  --source-arn arn:aws:cognito-idp:eu-west-2:<ACCOUNT_ID>:userpool/<USER_POOL_ID>
 
 aws lambda add-permission \
   --function-name verify-auth-challenge \
   --statement-id cognito-trigger \
   --action lambda:InvokeFunction \
   --principal cognito-idp.amazonaws.com \
-  --source-arn arn:aws:cognito-idp:eu-west-1:<ACCOUNT_ID>:userpool/<USER_POOL_ID>
+  --source-arn arn:aws:cognito-idp:eu-west-2:<ACCOUNT_ID>:userpool/<USER_POOL_ID>
 ```
 
 `<ACCOUNT_ID>` is your 12-digit AWS account ID:
@@ -204,7 +208,7 @@ Set the returned SID (`VA...`) as `TWILIO_VERIFY_SERVICE_SID` in `.env.local`.
 ### 4-2. Enable the channels
 
 - **SMS** is enabled by default on a new Verify Service.
-- **RCS**: enable the RCS channel on the Verify Service and link an **approved RCS sender** (Twilio Console → Messaging → RCS). RCS sender onboarding (Google verification) is similar to WhatsApp and takes time — plan ahead if you want it live for a demo. If RCS isn't available for a given device/number, Verify can fall back automatically when configured.
+- **RCS**: RCS is **not** a channel you request — Verify's **RCS Upgrade** (on by default) automatically upgrades an `sms` verification to RCS when the recipient's device supports it, falling back to SMS otherwise. For branded RCS delivery, link an **approved RCS sender** (Twilio Console → Messaging → RCS); onboarding (Google verification) is similar to WhatsApp and takes time. Requesting `Channel=rcs` (or `Channel=auto`) directly returns HTTP 400 / error 60200 on a standard service.
 
 ### 4-3. Verify your credentials
 
@@ -220,7 +224,7 @@ This app calls the REST API directly (form-encoded), no SDK in the request path:
 | Send OTP        | `POST /v2/Services/{SID}/Verifications`               | application/x-www-form-urlencoded   |
 | Check OTP       | `POST /v2/Services/{SID}/VerificationCheck`           | application/x-www-form-urlencoded   |
 
-`Verifications` takes `To` (E.164 phone number) and `Channel` (`sms` or `rcs`). `VerificationCheck` takes `To` and `Code`. A successful check returns `status: "approved"`.
+`Verifications` takes `To` (E.164 phone number) and `Channel` (always `sms` — Verify upgrades to RCS automatically; read the delivered channel from `send_code_attempts` in the response). `VerificationCheck` takes `To` and `Code`. A successful check returns `status: "approved"`.
 
 > **Testing delivery without a local SIM:** for demos you can use Twilio [test credentials / magic numbers](https://www.twilio.com/docs/verify/api/test-verification-numbers) to exercise the API flow, and the [Verify Fraud Guard / logs in the Console](https://www.twilio.com/docs/verify) to see attempts. Real cross-border delivery testing (e.g. a Thailand number) still needs a reachable handset on that carrier — confirm the current best practice with your Twilio SE.
 
@@ -233,13 +237,13 @@ This app calls the REST API directly (form-encoded), no SDK in the request path:
 aws secretsmanager create-secret \
   --name myapp/twilio \
   --secret-string '{"TWILIO_AUTH_TOKEN":"<YOUR_TOKEN>"}' \
-  --region eu-west-1
+  --region eu-west-2
 
 # Verify Proof Secret
 aws secretsmanager create-secret \
   --name myapp/verify \
   --secret-string '{"VERIFY_PROOF_SECRET":"<YOUR_SECRET>"}' \
-  --region eu-west-1
+  --region eu-west-2
 ```
 
 ---
@@ -269,15 +273,15 @@ docker build -t verify-otp-cognito .
 
 ```bash
 # Create the ECR repository
-aws ecr create-repository --repository-name verify-otp-cognito --region eu-west-1
+aws ecr create-repository --repository-name verify-otp-cognito --region eu-west-2
 
 # Log in
-aws ecr get-login-password --region eu-west-1 | \
-  docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.eu-west-1.amazonaws.com
+aws ecr get-login-password --region eu-west-2 | \
+  docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.eu-west-2.amazonaws.com
 
 # Tag & push
-docker tag verify-otp-cognito:latest <ACCOUNT_ID>.dkr.ecr.eu-west-1.amazonaws.com/verify-otp-cognito:latest
-docker push <ACCOUNT_ID>.dkr.ecr.eu-west-1.amazonaws.com/verify-otp-cognito:latest
+docker tag verify-otp-cognito:latest <ACCOUNT_ID>.dkr.ecr.eu-west-2.amazonaws.com/verify-otp-cognito:latest
+docker push <ACCOUNT_ID>.dkr.ecr.eu-west-2.amazonaws.com/verify-otp-cognito:latest
 ```
 
 ### 7-3. Create the App Runner service
@@ -286,12 +290,14 @@ Create the service via the AWS console or CLI. Set these environment variables:
 
 | Variable                    | Value                     |
 | --------------------------- | ------------------------- |
-| `AWS_REGION`                | `eu-west-1`               |
+| `APP_AWS_REGION`            | `eu-west-2`               |
 | `TWILIO_ACCOUNT_SID`        | Twilio Account SID        |
 | `TWILIO_VERIFY_SERVICE_SID` | Twilio Verify Service SID |
 | `COGNITO_USER_POOL_ID`      | Cognito User Pool ID      |
 | `COGNITO_CLIENT_ID`         | Cognito Client ID         |
 | `USE_SECRETS_MANAGER`       | `true`                    |
+
+(Omit `APP_AWS_PROFILE` in production — the App Runner instance role supplies credentials via the default provider chain.)
 
 **Note:** `TWILIO_AUTH_TOKEN` and `VERIFY_PROOF_SECRET` come from Secrets Manager, so they don't need to be set as env vars.
 
@@ -330,7 +336,7 @@ Check:
 Inspect the Lambda logs:
 
 ```bash
-aws logs tail /aws/lambda/verify-auth-challenge --since 5m --region eu-west-1
+aws logs tail /aws/lambda/verify-auth-challenge --since 5m --region eu-west-2
 ```
 
 ### Cognito `UsernameExistsException`
