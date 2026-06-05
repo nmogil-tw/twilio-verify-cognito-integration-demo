@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
-const region = process.env.AWS_REGION ?? "eu-west-1";
+const region =
+  process.env.APP_AWS_REGION ?? process.env.AWS_REGION ?? "eu-west-2";
 const userPoolId = process.env.COGNITO_USER_POOL_ID ?? "";
 
 let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;

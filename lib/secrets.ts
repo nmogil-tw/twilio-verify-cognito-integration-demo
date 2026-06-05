@@ -2,12 +2,11 @@ import {
   SecretsManagerClient,
   GetSecretValueCommand,
 } from "@aws-sdk/client-secrets-manager";
+import { awsClientConfig } from "./aws-config";
 
 let cache: Record<string, string> | null = null;
 
-const client = new SecretsManagerClient({
-  region: process.env.AWS_REGION ?? "eu-west-1",
-});
+const client = new SecretsManagerClient(awsClientConfig());
 
 async function fetchSecret(name: string): Promise<string> {
   const res = await client.send(

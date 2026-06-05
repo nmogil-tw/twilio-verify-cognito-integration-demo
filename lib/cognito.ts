@@ -6,10 +6,9 @@ import {
   AdminRespondToAuthChallengeCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import crypto from "crypto";
+import { awsClientConfig } from "./aws-config";
 
-const client = new CognitoIdentityProviderClient({
-  region: process.env.AWS_REGION ?? "eu-west-1",
-});
+const client = new CognitoIdentityProviderClient(awsClientConfig());
 
 const userPoolId = () => process.env.COGNITO_USER_POOL_ID!;
 const clientId = () => process.env.COGNITO_CLIENT_ID!;
